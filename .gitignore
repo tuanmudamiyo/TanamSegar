@@ -1,0 +1,11 @@
+# Video files are not used by the site and are far too large for GitHub
+# (any file over 100 MB is rejected). The login background is pure CSS.
+*.mp4
+
+# Windows / editor cruft
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+*.tmp
+~$*

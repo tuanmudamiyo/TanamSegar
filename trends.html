@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<script>
+  try {
+    var t = localStorage.getItem('tanamsegar_theme');
+    if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', t);
+  } catch (e) {}
+</script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Trends — TanamSegar</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="page-loader" id="pageLoader"><div class="loader"></div></div>
+  <header>
+    <div class="brand">
+      <div class="brand-mark"><img src="logo.png" alt="TanamSegar logo" /></div>
+      <div><h1>TanamSegar</h1><span>Preferred Soil Monitor Platform</span></div>
+    </div>
+    <div class="header-actions">
+      <div class="live"><span class="dot" id="liveDot"></span><span id="liveTxt">Connecting…</span></div>
+      <button type="button" id="themeBtn" class="icon-btn" title="Toggle theme"></button>
+    </div>
+  </header>
+
+  <section id="view-trends">
+    <p class="section-label">Trends</p>
+    <p class="trend-note">Live readings collected across your visits — hover a chart for a reading.</p>
+    <div class="trends" id="trends"></div>
+
+    <div class="import-card">
+      <button type="button" class="import-btn" id="downloadBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 4v12M12 16l-4-4M12 16l4-4"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+        Download Trend Data
+      </button>
+      <p class="import-status" id="importStatus"></p>
+    </div>
+
+    <p class="stamp" id="stamp">—</p>
+  </section>
+
+  <nav>
+    <button id="navHome"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg>Home</button>
+    <button id="navAnalyze"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>Analyze</button>
+    <button class="active" id="navTrends"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>Trends</button>
+    <button id="navProfile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>Profile</button>
+  </nav>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import { getDatabase, ref, onValue, get } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+  import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+
+  /* Same project as index.html — keep these files in sync. */
+  const firebaseConfig = {
+    apiKey: "AIzaSyDmqth-CeM4IaWZXBK0SzKXvboCGYDLI10",
+    authDomain: "iot-lstm-agriculture.firebaseapp.com",
+    databaseURL: "https://iot-lstm-agriculture-default-rtdb.asia-southeast1.firebasedatabase.app",
+    projectId: "iot-lstm-agriculture",
+    storageBucket: "iot-lstm-agriculture.firebasestorage.app",
+    messagingSenderId: "896953838868",
+    appId: "1:896953838868:web:6a154d99e90f577515e601"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db  = getDatabase(app);
+  const auth = getAuth(app);
+
+  /* strong = dark end (top of chart, highest values), weak = faded end (bottom, lowest) */
+  const trendCfg = [
+    { key:'temperature', label:'Temperature',      unit:'°C',    color:'var(--clay)',   strong:'#b91c1c', weak:'#fca5a5', decimals:1 },
+    { key:'humidity',    label:'Humidity',         unit:'%',     color:'var(--sky)',    strong:'#0369a1', weak:'#7dd3fc', decimals:1 },
+    { key:'ldr',         label:'Light Level',      unit:'raw',   color:'var(--amber)',  strong:'#d97706', weak:'#fde68a', decimals:0 },
+    { key:'nitrogen',    label:'Nitrogen',         unit:'mg/kg', color:'var(--sky)',    strong:'#0284c7', weak:'#bae6fd', decimals:0 },
+    { key:'phosphorus',  label:'Phosphorus',       unit:'mg/kg', color:'#f97316',       strong:'#ea580c', weak:'#facc15', decimals:0 },
+    { key:'potassium',   label:'Potassium',        unit:'mg/kg', color:'var(--violet)', strong:'#6d28d9', weak:'#c4b5fd', decimals:0 },
+    { key:'moisture',    label:'Moisture',         unit:'%',     color:'var(--sky)',    strong:'#0e7490', weak:'#67e8f9', decimals:1 },
+    { key:'soilTemp',    label:'Soil Temperature', unit:'°C',    color:'var(--clay)',   strong:'#c2410c', weak:'#fdba74', decimals:1 },
+    { key:'ec',          label:'EC',               unit:'mS/cm', color:'var(--violet)', strong:'#a21caf', weak:'#f0abfc', decimals:2 },
+    { key:'ph',          label:'pH',               unit:'',      color:'var(--leaf)',   strong:'#15803d', weak:'#86efac', decimals:1 }
+  ];
+
+  const $ = id => document.getElementById(id);
+
+  /* ---- Theme (light/dark) ---- */
+  const THEME_KEY = 'tanamsegar_theme';
+  const moonIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg>';
+  const sunIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
+
+  function paintThemeBtn(){
+    const theme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+    $('themeBtn').innerHTML = theme === 'dark' ? sunIcon : moonIcon;
+  }
+  paintThemeBtn();
+
+  $('themeBtn').addEventListener('click', () => {
+    const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem(THEME_KEY, next); } catch {}
+    paintThemeBtn();
+  });
+
+  function setLive(ok){
+    $('liveDot').classList.toggle('on', ok);
+    $('liveTxt').textContent = ok ? 'Live' : 'Offline';
+  }
+
+  /* Live turns off when no fresh data arrives for a while
+     (the device pushes every ~3 s, so 15 s of silence = offline). */
+  const LIVE_TIMEOUT_MS = 15000;
+  let liveTimer = null;
+  let firstSnap = true;   // the first snapshot is Firebase's cached last value,
+                          // not proof the device is alive - don't count it
+  function markLive(){
+    setLive(true);
+    clearTimeout(liveTimer);
+    liveTimer = setTimeout(() => setLive(false), LIVE_TIMEOUT_MS);
+  }
+  function armOfflineTimer(){
+    clearTimeout(liveTimer);
+    liveTimer = setTimeout(() => setLive(false), LIVE_TIMEOUT_MS);
+  }
+
+  function stamp(){
+    $('stamp').textContent = 'Updated ' +
+      new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  }
+
+  /* ---- Trend history: same localStorage key as index.html, so both pages share one timeline ---- */
+  const HISTORY_MAX = 200;
+  const HISTORY_KEY = 'tanamsegar_history_v1';
+
+  function loadHistory(){
+    try {
+      const raw = localStorage.getItem(HISTORY_KEY);
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    const h = {};
+    trendCfg.forEach(c => h[c.key] = []);
+    return h;
+  }
+  const history = loadHistory();
+
+  function saveHistory(){
+    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(history)); } catch {}
+  }
+
+  function pushHistory(d){
+    const t = Date.now();
+    trendCfg.forEach(c => {
+      const v = Number(d[c.key] ?? NaN);
+      if (Number.isNaN(v)) return;
+      const arr = history[c.key] || (history[c.key] = []);
+      arr.push({ t, v });
+      if (arr.length > HISTORY_MAX) arr.shift();
+    });
+    saveHistory();
+  }
+
+  /* ---- Trends rendering ---- */
+  const TW = 300, TH = 84; // trend chart viewBox size
+
+  function renderTrends(){
+    $('trends').innerHTML = trendCfg.map(c => {
+      const pts = history[c.key] || [];
+      const last = pts[pts.length - 1];
+      const valTxt = last ? last.v.toFixed(c.decimals) : '—';
+      return `
+      <div class="trend-card" style="--c:${c.color}">
+        <div class="trend-head">
+          <p>${c.label}</p>
+          <div class="trend-now">${valTxt}<small>${c.unit}</small></div>
+        </div>
+        <div class="trend-chart" data-key="${c.key}"></div>
+      </div>`;
+    }).join('');
+
+    trendCfg.forEach(c => {
+      const el = document.querySelector(`.trend-chart[data-key="${c.key}"]`);
+      if (el) drawTrendChart(el, history[c.key] || [], c);
+    });
+  }
+
+  function drawTrendChart(el, pts, cfg){
+    if (pts.length < 2) {
+      el.innerHTML = `<div class="trend-empty">Collecting data…</div>`;
+      return;
+    }
+    const PAD = 10;
+    const ts = pts.map(p => p.t), vs = pts.map(p => p.v);
+    const tMin = Math.min(...ts), tMax = Math.max(...ts);
+    let vMin = Math.min(...vs), vMax = Math.max(...vs);
+    if (vMin === vMax) { vMin -= 1; vMax += 1; }
+    const vPad = (vMax - vMin) * 0.15;
+    vMin -= vPad; vMax += vPad;
+
+    const x = t => tMax === tMin ? TW / 2 : PAD + (t - tMin) / (tMax - tMin) * (TW - PAD * 2);
+    const y = v => (TH - 14) - (v - vMin) / (vMax - vMin) * (TH - 26);
+    const baseY = TH - 14;
+
+    const path = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ');
+    const last = pts[pts.length - 1];
+    const lx = x(last.t).toFixed(1), ly = y(last.v).toFixed(1);
+    const gid = 'tg-' + cfg.key;
+    const area = `${path} L${x(last.t).toFixed(1)},${baseY} L${x(pts[0].t).toFixed(1)},${baseY} Z`;
+
+    el.innerHTML = `
+      <svg viewBox="0 0 ${TW} ${TH}" class="trend-svg">
+        <defs>
+          <linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="${TH}" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="${cfg.strong}"/>
+            <stop offset="1" stop-color="${cfg.weak}" stop-opacity=".55"/>
+          </linearGradient>
+          <linearGradient id="${gid}-fill" x1="0" y1="0" x2="0" y2="${TH}" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="${cfg.strong}" stop-opacity=".22"/>
+            <stop offset="1" stop-color="${cfg.weak}" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        <line x1="0" y1="${baseY}" x2="${TW}" y2="${baseY}" class="trend-baseline"/>
+        <path d="${area}" fill="url(#${gid}-fill)" stroke="none"/>
+        <path d="${path}" fill="none" stroke="url(#${gid})" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <line class="trend-cross" x1="0" y1="0" x2="0" y2="${TH}" style="display:none"/>
+        <circle class="trend-hover-dot" r="4" fill="${cfg.strong}" stroke="var(--panel)" stroke-width="2" style="display:none"/>
+        <circle cx="${lx}" cy="${ly}" r="4" fill="${cfg.strong}" stroke="var(--panel)" stroke-width="2"/>
+        <rect x="0" y="0" width="${TW}" height="${TH}" fill="transparent" class="trend-hit"/>
+      </svg>
+      <div class="trend-tip" style="display:none"></div>`;
+
+    wireTrendHover(el, pts, x, y, cfg);
+  }
+
+  function wireTrendHover(el, pts, x, y, cfg){
+    const svg = el.querySelector('.trend-svg');
+    const hit = el.querySelector('.trend-hit');
+    const cross = el.querySelector('.trend-cross');
+    const dot = el.querySelector('.trend-hover-dot');
+    const tip = el.querySelector('.trend-tip');
+
+    function nearest(clientX){
+      const rect = svg.getBoundingClientRect();
+      const frac = Math.min(Math.max((clientX - rect.left) / rect.width, 0), 1);
+      const svgX = frac * TW;
+      let best = 0, bestDist = Infinity;
+      pts.forEach((p, i) => {
+        const dist = Math.abs(x(p.t) - svgX);
+        if (dist < bestDist) { bestDist = dist; best = i; }
+      });
+      return pts[best];
+    }
+
+    function show(clientX){
+      const p = nearest(clientX);
+      const px = x(p.t), py = y(p.v);
+      cross.setAttribute('x1', px); cross.setAttribute('x2', px);
+      cross.style.display = '';
+      dot.setAttribute('cx', px); dot.setAttribute('cy', py);
+      dot.style.display = '';
+      tip.style.left = (px / TW * 100) + '%';
+      tip.style.display = '';
+      tip.textContent = `${p.v.toFixed(cfg.decimals)} ${cfg.unit} · ${new Date(p.t).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`;
+    }
+
+    function hide(){
+      cross.style.display = 'none';
+      dot.style.display = 'none';
+      tip.style.display = 'none';
+    }
+
+    hit.addEventListener('pointermove', e => show(e.clientX));
+    hit.addEventListener('pointerdown', e => show(e.clientX));
+    hit.addEventListener('pointerleave', hide);
+  }
+
+  /* ---- Download the full dataset (Firebase /Logs) as an .xlsx ---- */
+  function logMetrics(rec){
+    if (rec.sensors) return rec.sensors;   // current firmware format
+    const m = {};                          // legacy log format fallback
+    if (rec.DHT) { m.temperature = rec.DHT.Temperature; m.humidity = rec.DHT.Humidity; }
+    if (rec.Sensors) m.ldr = rec.Sensors.LDR;
+    if (rec.Soil7in1) {
+      m.moisture = rec.Soil7in1.Moisture; m.soilTemp = rec.Soil7in1.Temperature;
+      m.ec = rec.Soil7in1.EC; m.ph = rec.Soil7in1.pH;
+      m.nitrogen = rec.Soil7in1.Nitrogen; m.phosphorus = rec.Soil7in1.Phosphorus;
+      m.potassium = rec.Soil7in1.Potassium;
+    }
+    return m;
+  }
+
+  $('downloadBtn').addEventListener('click', async () => {
+    const statusEl = $('importStatus');
+    statusEl.classList.remove('error');
+    statusEl.textContent = 'Fetching dataset…';
+    try {
+      const snap = await get(ref(db, 'Logs'));
+      if (!snap.exists()) {
+        statusEl.classList.add('error');
+        statusEl.textContent = 'No logged data yet — the device stores one reading per minute while it runs.';
+        return;
+      }
+      const logs = snap.val();
+      const keys = Object.keys(logs).sort((a, b) => Number(a) - Number(b));
+      const rows = [['Time', 'Temperature', 'Humidity', 'Light', 'Nitrogen', 'Phosphorus', 'Potassium', 'Moisture', 'Soil Temperature', 'EC', 'pH']];
+      keys.forEach(k => {
+        const rec = logs[k] || {};
+        const m = logMetrics(rec);
+        const ts = Number(rec.timestamp || k) * 1000;
+        rows.push([
+          new Date(ts),
+          m.temperature ?? '', m.humidity ?? '', m.ldr ?? '',
+          m.nitrogen ?? '', m.phosphorus ?? '', m.potassium ?? '',
+          m.moisture ?? '', m.soilTemp ?? '', m.ec ?? '', m.ph ?? ''
+        ]);
+      });
+      const ws = XLSX.utils.aoa_to_sheet(rows, { cellDates: true });
+      ws['!cols'] = [{ wch: 20 }, ...Array(10).fill({ wch: 12 })];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Dataset');
+      XLSX.writeFile(wb, `tanamsegar_dataset_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      statusEl.textContent = `Downloaded ${rows.length - 1} readings.`;
+    } catch (err) {
+      console.error(err);
+      statusEl.classList.add('error');
+      statusEl.textContent = 'Could not fetch the dataset. Check your connection and try again.';
+    }
+  });
+
+  /* ---- Nav ---- */
+  $('navHome').addEventListener('click', () => { window.location.href = 'index.html'; });
+  $('navAnalyze').addEventListener('click', () => { window.location.href = 'analyze.html'; });
+  $('navProfile').addEventListener('click', () => { window.location.href = 'profile.html'; });
+
+  /* ---- Idle auto sign-out: glass countdown warning, then back to the login page ---- */
+  const IDLE_LIMIT_MS = 5 * 60 * 1000;
+  const WARN_BEFORE_MS = 60 * 1000;   // countdown fills the last 60 s
+  const WARN_RING_C = 2 * Math.PI * 54;
+  let idleTimer = null, warnTimer = null, warnInterval = null;
+
+  const warnEl = document.createElement('div');
+  warnEl.className = 'idle-warn';
+  warnEl.innerHTML = `
+    <div class="idle-card">
+      <div class="idle-ring">
+        <svg viewBox="0 0 120 120">
+          <circle class="track" cx="60" cy="60" r="54"/>
+          <circle class="left" cx="60" cy="60" r="54" stroke-dasharray="${WARN_RING_C}"/>
+        </svg>
+        <span class="idle-count">60</span>
+      </div>
+      <h2>Still there?</h2>
+      <p>You've been idle for a while.<br>Logging out soon to keep your data safe.</p>
+      <button type="button" class="idle-stay">I'm still here</button>
+    </div>`;
+  document.body.appendChild(warnEl);
+
+  function showIdleWarning(){
+    const ring = warnEl.querySelector('.left');
+    const count = warnEl.querySelector('.idle-count');
+    const t0 = Date.now();
+    warnEl.classList.add('on');
+    const tick = () => {
+      const left = Math.max(0, WARN_BEFORE_MS - (Date.now() - t0));
+      const s = Math.ceil(left / 1000);
+      count.textContent = s;
+      ring.style.strokeDashoffset = WARN_RING_C * (1 - left / WARN_BEFORE_MS);
+      warnEl.classList.toggle('urgent', s <= 10);
+    };
+    tick();
+    warnInterval = setInterval(tick, 250);
+  }
+
+  function hideIdleWarning(){
+    clearInterval(warnInterval);
+    warnEl.classList.remove('on', 'urgent');
+  }
+
+  function resetIdleTimer(){
+    clearTimeout(idleTimer);
+    clearTimeout(warnTimer);
+    hideIdleWarning();
+    warnTimer = setTimeout(showIdleWarning, IDLE_LIMIT_MS - WARN_BEFORE_MS);
+    idleTimer = setTimeout(() => signOut(auth), IDLE_LIMIT_MS);
+  }
+
+  ['mousedown', 'mousemove', 'keydown', 'touchstart', 'scroll', 'wheel'].forEach(evt =>
+    document.addEventListener(evt, resetIdleTimer, { passive: true })
+  );
+
+  let sensorsStarted = false;
+
+  onAuthStateChanged(auth, user => {
+    if (!user) {
+      clearTimeout(idleTimer);
+      window.location.replace('login.html?form=1');
+      return;
+    }
+    $('pageLoader').hidden = true;
+    resetIdleTimer();
+    renderTrends();
+    if (sensorsStarted) return;
+    sensorsStarted = true;
+    onValue(ref(db, 'sensors'),
+      snap => {
+        const d = snap.val();
+        if (!d) { setLive(false); return; }
+        if (firstSnap) { firstSnap = false; armOfflineTimer(); }
+        else markLive();
+        pushHistory(d);
+        renderTrends();
+        stamp();
+      },
+      err => { console.error(err); setLive(false); }
+    );
+  });
+</script>
+</body>
+</html>
