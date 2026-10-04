@@ -6,7 +6,7 @@ Project (PSM 1) at Universiti Teknikal Malaysia Melaka.
 An ESP32 in the field reads soil and air conditions, pushes them to Firebase
 Realtime Database, and this dashboard renders them live in the browser.
 
-**Live site:** https://tuanmudamiyo.github.io/tanamsegar/login.html
+**Live site:** https://tuanmudamiyo.github.io/TanamSegar/login.html
 
 ## What it shows
 
