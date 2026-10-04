@@ -6,7 +6,7 @@ Project (PSM 1) at Universiti Teknikal Malaysia Melaka.
 An ESP32 in the field reads soil and air conditions, pushes them to Firebase
 Realtime Database, and this dashboard renders them live in the browser.
 
-**Live site:** https://tuanmudamiyo.github.io/TanamSegar/login.html
+**Live site:** https://tuanmudamiyo.github.io/TanamSegar/
 
 ## What it shows
 
@@ -24,7 +24,7 @@ phosphorus, potassium).
 ## Running it
 
 The site is static — no build step and no dependencies to install. Open
-`login.html` through any web server, or visit the live link above.
+`index.html` through any web server, or visit the live link above.
 
 Sign-in uses Firebase Authentication. Data is read from Firebase Realtime
 Database; security rules make every sensor path read-only to signed-in clients,
@@ -40,11 +40,11 @@ so only the hardware can write readings.
 ## Repository layout
 
 ```
-index.html     Home - live readings
+index.html     Welcome splash and sign-in (entry point)
+home.html      Live readings
 trends.html    History charts and dataset download
 analyze.html   Analysis (placeholder)
 profile.html   Account and plant selection
-login.html     Welcome splash and sign-in
 styles.css     Shared theme tokens and components
 ```
 

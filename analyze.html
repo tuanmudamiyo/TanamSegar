@@ -50,7 +50,7 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
-  /* Same project as index.html — keep these files in sync. */
+  /* Same project as home.html — keep these files in sync. */
   const firebaseConfig = {
     apiKey: "AIzaSyDmqth-CeM4IaWZXBK0SzKXvboCGYDLI10",
     authDomain: "iot-lstm-agriculture.firebaseapp.com",
@@ -85,7 +85,7 @@
   });
 
   /* ---- Nav ---- */
-  $('navHome').addEventListener('click', () => { window.location.href = 'index.html'; });
+  $('navHome').addEventListener('click', () => { window.location.href = 'home.html'; });
   $('navTrends').addEventListener('click', () => { window.location.href = 'trends.html'; });
   $('navProfile').addEventListener('click', () => { window.location.href = 'profile.html'; });
 
@@ -148,7 +148,7 @@
   onAuthStateChanged(auth, user => {
     if (!user) {
       clearTimeout(idleTimer);
-      window.location.replace('login.html?form=1');
+      window.location.replace('index.html?form=1');
       return;
     }
     $('pageLoader').hidden = true;
