@@ -29,14 +29,62 @@
   </header>
 
   <section id="view-analyze">
-    <p class="section-label">Analyze</p>
-    <div class="coming-soon">
-      <div class="ico">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-      </div>
-      <h2>Coming soon</h2>
-      <p>Deeper analysis of your soil and climate readings will show up here.</p>
+    <p class="section-label">Dataset collection</p>
+    <div class="collect-hero">
+      <div class="collect-count"><strong id="cRecords">—</strong><span>records logged</span></div>
+      <div class="collect-bar"><i id="cBar"></i></div>
+      <div class="collect-goal"><span id="cGoal">&nbsp;</span><span id="cPct">&nbsp;</span></div>
     </div>
+
+    <div class="collect-grid">
+      <div class="collect-tile" id="tileFresh">
+        <span class="ct-label">Last record</span>
+        <strong class="ct-val" id="cFresh">—</strong>
+        <span class="ct-sub" id="cFreshSub">checking…</span>
+      </div>
+      <div class="collect-tile" id="tileUptime">
+        <span class="ct-label">Uptime 24h</span>
+        <strong class="ct-val" id="cUptime">—</strong>
+        <span class="ct-sub" id="cUptimeSub">rows received</span>
+      </div>
+      <div class="collect-tile">
+        <span class="ct-label">Collecting since</span>
+        <strong class="ct-val" id="cSince">—</strong>
+        <span class="ct-sub" id="cSinceSub">&nbsp;</span>
+      </div>
+      <div class="collect-tile">
+        <span class="ct-label">Largest gap</span>
+        <strong class="ct-val" id="cGap">—</strong>
+        <span class="ct-sub">in the last 24h</span>
+      </div>
+    </div>
+
+    <p class="section-label">Sensor health</p>
+    <div class="diag-card">
+      <div class="trend-empty" id="diagEmpty">Waiting for the first readings…</div>
+      <table class="diag" id="diagTable" hidden>
+        <thead><tr><th>Channel</th><th>Min</th><th>Max</th><th>Status</th></tr></thead>
+        <tbody id="diagBody"></tbody>
+      </table>
+    </div>
+
+    <p class="section-label">Nutrient independence</p>
+    <div class="npk-check">
+      <div class="trend-empty" id="npkEmpty">Needs about half an hour of readings…</div>
+      <div id="npkBody" hidden></div>
+    </div>
+
+    <p class="section-label">Event log</p>
+    <div class="evt-card">
+      <div class="evt-actions">
+        <button type="button" class="evt-btn" data-evt="water">Watered</button>
+        <button type="button" class="evt-btn" data-evt="fertiliser">Fertilised</button>
+      </div>
+      <p class="import-status" id="evtStatus"></p>
+      <ul class="evt-list" id="evtList"></ul>
+    </div>
+
+    <p class="stamp" id="cStamp">&nbsp;</p>
   </section>
 
   <nav>
@@ -49,6 +97,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+  import { getDatabase, ref, get, query, orderByKey, limitToLast, push } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
   /* Same project as home.html — keep these files in sync. */
   const firebaseConfig = {
@@ -63,6 +112,7 @@
 
   const app = initializeApp(firebaseConfig);
   const auth = getAuth(app);
+  const db   = getDatabase(app);
 
   const $ = id => document.getElementById(id);
 
@@ -88,6 +138,269 @@
   $('navHome').addEventListener('click', () => { window.location.href = 'home.html'; });
   $('navTrends').addEventListener('click', () => { window.location.href = 'trends.html'; });
   $('navProfile').addEventListener('click', () => { window.location.href = 'profile.html'; });
+
+  /* ---- Dataset collection monitor ----
+     Watches /Logs while the ESP32 is collecting: how much data exists, whether
+     it is still arriving, and whether each sensor channel is actually moving.
+     Replaced by the forecast UI once the model is trained. */
+  const TARGET_DAYS = 28;
+  const TARGET_ROWS = TARGET_DAYS * 24 * 60;   // one record per minute
+  const WINDOW_ROWS = 1500;                    // ~25 h, enough for the health checks
+
+  const CHANNELS = [
+    { key:'temperature', label:'Air temp',      fast:true  },
+    { key:'humidity',    label:'Air humidity',  fast:true  },
+    { key:'ldr',         label:'Light',         fast:true  },
+    { key:'moisture',    label:'Soil moisture', fast:true  },
+    { key:'soilTemp',    label:'Soil temp',     fast:false },
+    { key:'ec',          label:'EC',            fast:false },
+    { key:'ph',          label:'pH',            fast:false },
+    { key:'nitrogen',    label:'Nitrogen',      fast:false },
+    { key:'phosphorus',  label:'Phosphorus',    fast:false },
+    { key:'potassium',   label:'Potassium',     fast:false }
+  ];
+
+  /* Same shape handling as trends.html: current firmware nests readings under
+     sensors/, older records used DHT/Sensors/Soil7in1. */
+  function logMetrics(rec){
+    if (rec.sensors) return rec.sensors;
+    const m = {};
+    if (rec.DHT) { m.temperature = rec.DHT.Temperature; m.humidity = rec.DHT.Humidity; }
+    if (rec.Sensors) m.ldr = rec.Sensors.LDR;
+    if (rec.Soil7in1) {
+      m.moisture = rec.Soil7in1.Moisture; m.soilTemp = rec.Soil7in1.Temperature;
+      m.ec = rec.Soil7in1.EC; m.ph = rec.Soil7in1.pH;
+      m.nitrogen = rec.Soil7in1.Nitrogen; m.phosphorus = rec.Soil7in1.Phosphorus;
+      m.potassium = rec.Soil7in1.Potassium;
+    }
+    return m;
+  }
+
+  const nf  = n => n.toLocaleString('en-US');
+  const num = v => (typeof v === 'number' && isFinite(v)) ? v : null;
+
+  function fmtAge(sec){
+    if (sec < 90)     return Math.max(0, Math.round(sec)) + 's';
+    if (sec < 5400)   return Math.round(sec / 60) + 'm';
+    if (sec < 172800) return (sec / 3600).toFixed(sec < 36000 ? 1 : 0) + 'h';
+    return Math.round(sec / 86400) + 'd';
+  }
+
+  /* Pearson r. Returns null when there is too little data, or when one side
+     never moves (an undefined correlation, not a zero one). */
+  function pearson(xs, ys){
+    const n = xs.length;
+    if (n < 30) return null;
+    let sx = 0, sy = 0;
+    for (let i = 0; i < n; i++){ sx += xs[i]; sy += ys[i]; }
+    const mx = sx / n, my = sy / n;
+    let cov = 0, vx = 0, vy = 0;
+    for (let i = 0; i < n; i++){
+      const a = xs[i] - mx, b = ys[i] - my;
+      cov += a * b; vx += a * a; vy += b * b;
+    }
+    if (vx === 0 || vy === 0) return null;
+    return cov / Math.sqrt(vx * vy);
+  }
+
+  let lastTs = 0;
+
+  /* Ticks on its own so a stall becomes visible without reloading the page. */
+  function paintFreshness(){
+    if (!lastTs) return;
+    const age  = Date.now() / 1000 - lastTs;
+    const tile = $('tileFresh');
+    $('cFresh').textContent = fmtAge(age) + ' ago';
+    tile.classList.remove('good', 'warn', 'bad');
+    if (age < 180){
+      tile.classList.add('good');
+      $('cFreshSub').textContent = 'logging normally';
+    } else if (age < 900){
+      tile.classList.add('warn');
+      $('cFreshSub').textContent = 'later than expected';
+    } else {
+      tile.classList.add('bad');
+      $('cFreshSub').textContent = 'collection has stalled';
+    }
+  }
+
+  /* Keys only - stays small even at 40k records, and gives an exact count. */
+  async function loadTotals(user){
+    const token = await user.getIdToken();
+    const res = await fetch(firebaseConfig.databaseURL + '/Logs.json?shallow=true', {
+      headers: { Authorization: 'Bearer ' + token }
+    });
+    if (!res.ok) throw new Error('shallow read failed: ' + res.status);
+    const keys = await res.json();
+    const list = keys ? Object.keys(keys).map(Number).filter(n => n > 0).sort((a, b) => a - b) : [];
+
+    $('cRecords').textContent = nf(list.length);
+    $('cGoal').textContent = 'target ' + nf(TARGET_ROWS) + ' · ' + TARGET_DAYS + ' days';
+    const pct = Math.min(100, list.length / TARGET_ROWS * 100);
+    $('cBar').style.width = pct.toFixed(1) + '%';
+    $('cPct').textContent = (list.length && pct < 1) ? '<1%' : Math.round(pct) + '%';
+
+    if (!list.length) return;
+    lastTs = list[list.length - 1];
+    const first = list[0];
+    $('cSince').textContent = new Date(first * 1000)
+      .toLocaleDateString('en-GB', { day:'numeric', month:'short' });
+    const days = (lastTs - first) / 86400;
+    $('cSinceSub').textContent = days < 1 ? 'started today' : days.toFixed(1) + ' days span';
+    paintFreshness();
+    setInterval(paintFreshness, 15000);
+  }
+
+  async function loadHealth(){
+    const snap = await get(query(ref(db, 'Logs'), orderByKey(), limitToLast(WINDOW_ROWS)));
+    if (!snap.exists()) return;
+
+    const raw  = snap.val();
+    const ts   = Object.keys(raw).map(Number).sort((a, b) => a - b);
+    const rows = ts.map(t => logMetrics(raw[String(t)] || {}));
+    const nowS = Date.now() / 1000;
+
+    /* --- uptime: received vs expected, scaled to how long it has been running --- */
+    const dayTs   = ts.filter(t => t > nowS - 86400);
+    const spanMin = Math.min(1440, Math.max(1, (nowS - ts[0]) / 60));
+    const up      = Math.min(100, dayTs.length / spanMin * 100);
+    $('cUptime').textContent = Math.round(up) + '%';
+    $('tileUptime').classList.add(up >= 95 ? 'good' : up >= 75 ? 'warn' : 'bad');
+    $('cUptimeSub').textContent = nf(dayTs.length) + ' of ~' + nf(Math.round(spanMin)) + ' rows';
+
+    /* --- largest gap, i.e. how long a dropout lasted --- */
+    let gap = 0;
+    for (let i = 1; i < dayTs.length; i++) gap = Math.max(gap, dayTs[i] - dayTs[i - 1]);
+    $('cGap').textContent = dayTs.length > 1 ? fmtAge(gap) : '—';
+
+    /* --- per-channel range and status --- */
+    const body = $('diagBody');
+    body.innerHTML = '';
+    CHANNELS.forEach(ch => {
+      const vals    = rows.map(r => num(r[ch.key])).filter(v => v !== null);
+      const missing = rows.length - vals.length;
+      let lo = '—', hi = '—', pill, text;
+
+      if (!vals.length){
+        pill = 'bad';  text = 'no data';
+      } else {
+        const mn = Math.min.apply(null, vals), mx = Math.max.apply(null, vals);
+        const dp = ch.key === 'ldr' ? 0 : (ch.key === 'ec' ? 2 : 1);
+        lo = mn.toFixed(dp); hi = mx.toFixed(dp);
+        if (mn === mx){
+          /* Air and light should swing over a day; nutrients legitimately may not. */
+          pill = ch.fast ? 'bad' : 'warn';
+          text = ch.fast ? 'flat - check wiring' : 'no change yet';
+        } else if (missing / rows.length > 0.2){
+          pill = 'warn'; text = Math.round(missing / rows.length * 100) + '% missing';
+        } else {
+          pill = 'ok';   text = 'ok';
+        }
+      }
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td>' + ch.label + '</td><td>' + lo + '</td><td>' + hi + '</td>' +
+                     '<td><span class="diag-pill ' + pill + '">' + text + '</span></td>';
+      body.appendChild(tr);
+    });
+    $('diagEmpty').hidden = true;
+    $('diagTable').hidden = false;
+
+    /* --- do N, P and K move independently of EC, or are they derived from it? --- */
+    const ecv = [], nv = [], pv = [], kv = [];
+    rows.forEach(r => {
+      const e = num(r.ec), a = num(r.nitrogen), b = num(r.phosphorus), c = num(r.potassium);
+      if (e !== null && a !== null && b !== null && c !== null){
+        ecv.push(e); nv.push(a); pv.push(b); kv.push(c);
+      }
+    });
+    const corr = [
+      ['Nitrogen',   pearson(ecv, nv)],
+      ['Phosphorus', pearson(ecv, pv)],
+      ['Potassium',  pearson(ecv, kv)]
+    ];
+    if (corr.some(pair => pair[1] !== null)){
+      let html = '', hot = 0;
+      corr.forEach(pair => {
+        const label = pair[0], v = pair[1];
+        if (v === null){
+          html += '<div class="corr-row"><b>' + label + '</b><div class="corr-track"></div>' +
+                  '<span class="corr-val">—</span></div>';
+          return;
+        }
+        const a = Math.abs(v);
+        if (a >= 0.95) hot++;
+        html += '<div class="corr-row"><b>' + label + '</b><div class="corr-track">' +
+                '<i class="' + (a >= 0.95 ? 'hot' : '') + '" style="width:' + (a * 100).toFixed(0) + '%"></i>' +
+                '</div><span class="corr-val">' + v.toFixed(2) + '</span></div>';
+      });
+      html += hot
+        ? '<p class="corr-note bad">' + hot + ' of 3 nutrient channels track EC almost exactly ' +
+          '(|r| &ge; 0.95), which suggests the probe derives N, P and K from its EC reading rather ' +
+          'than measuring them separately. Worth raising with your supervisor before committing to the full run.</p>'
+        : '<p class="corr-note">Each nutrient channel correlated against EC over the last 24 h. ' +
+          'Values close to 1.00 would mean the probe is deriving them from EC instead of measuring ' +
+          'them independently.</p>';
+      $('npkBody').innerHTML = html;
+      $('npkEmpty').hidden = true;
+      $('npkBody').hidden  = false;
+    }
+  }
+
+  /* ---- Event log: watering and fertiliser timestamps ---- */
+  async function loadEvents(){
+    const list = $('evtList');
+    try {
+      const snap = await get(query(ref(db, 'events'), orderByKey(), limitToLast(8)));
+      list.innerHTML = '';
+      if (!snap.exists()){
+        list.innerHTML = '<li><span>Nothing recorded yet</span></li>';
+        return;
+      }
+      const v = snap.val();
+      Object.keys(v).sort().reverse().forEach(k => {
+        const e = v[k] || {};
+        const when = e.at
+          ? new Date(e.at * 1000).toLocaleString('en-GB',
+              { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })
+          : '';
+        const li = document.createElement('li');
+        li.innerHTML = '<b>' + (e.type === 'fertiliser' ? 'Fertilised' : 'Watered') + '</b>' +
+                       '<span>' + when + '</span>';
+        list.appendChild(li);
+      });
+    } catch (err) {
+      list.innerHTML = '';
+      $('evtStatus').classList.add('error');
+      $('evtStatus').textContent = 'Event log needs the /events rule published in Firebase.';
+    }
+  }
+
+  document.querySelectorAll('.evt-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const type = btn.dataset.evt;
+      btn.classList.add('busy');
+      $('evtStatus').classList.remove('error');
+      $('evtStatus').textContent = 'Saving…';
+      try {
+        await push(ref(db, 'events'), { type: type, at: Math.floor(Date.now() / 1000) });
+        $('evtStatus').textContent = type === 'water' ? 'Watering recorded.' : 'Fertiliser recorded.';
+        loadEvents();
+      } catch (err) {
+        console.error(err);
+        $('evtStatus').classList.add('error');
+        $('evtStatus').textContent = 'Could not save - publish the /events rule in Firebase first.';
+      }
+      btn.classList.remove('busy');
+    });
+  });
+
+  async function startMonitor(user){
+    try { await loadTotals(user); } catch (err) { console.error(err); }
+    try { await loadHealth();     } catch (err) { console.error(err); }
+    loadEvents();
+    $('cStamp').textContent = 'Checked ' +
+      new Date().toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+  }
 
   /* ---- Idle auto sign-out: glass countdown warning, then back to the login page ---- */
   const IDLE_LIMIT_MS = 5 * 60 * 1000;
@@ -153,6 +466,7 @@
     }
     $('pageLoader').hidden = true;
     resetIdleTimer();
+    startMonitor(user);
   });
 </script>
 </body>

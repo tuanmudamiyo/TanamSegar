@@ -246,3 +246,51 @@ nav button svg{width:18px;height:18px}
 @keyframes l15{
   100%{transform:rotate(1turn)}
 }
+
+/* ---- Dataset collection monitor (Analyze) ---- */
+.collect-hero{position:relative;overflow:hidden;background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow);border-radius:var(--radius);padding:18px 18px 16px;margin-top:8px}
+.collect-hero::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--sky)}
+.collect-count{display:flex;align-items:baseline;gap:7px}
+.collect-count strong{font-family:'Space Grotesk';font-size:30px;font-weight:700;letter-spacing:-1px}
+.collect-count span{font-size:12px;color:var(--muted)}
+.collect-bar{height:7px;border-radius:99px;background:color-mix(in srgb,var(--sky) 15%,transparent);margin:13px 0 7px;overflow:hidden}
+.collect-bar i{display:block;height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,var(--sky),var(--leaf));transition:width .6s ease}
+.collect-goal{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);font-weight:500}
+.collect-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+.collect-tile{background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow);border-radius:16px;padding:13px 14px;display:flex;flex-direction:column;gap:3px}
+.ct-label{font-size:10px;text-transform:uppercase;letter-spacing:.9px;color:var(--muted);font-weight:600}
+.ct-val{font-family:'Space Grotesk';font-size:19px;font-weight:700;letter-spacing:-.4px}
+.ct-sub{font-size:10px;color:var(--muted)}
+.collect-tile.good .ct-val{color:var(--leaf)}
+.collect-tile.warn{border-color:color-mix(in srgb,var(--amber) 45%,var(--line))}
+.collect-tile.warn .ct-val{color:var(--amber)}
+.collect-tile.bad{border-color:color-mix(in srgb,var(--clay) 45%,var(--line))}
+.collect-tile.bad .ct-val{color:var(--clay)}
+.diag-card,.npk-check,.evt-card{background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow);border-radius:var(--radius);padding:4px 16px 12px;margin-top:8px}
+table.diag{width:100%;border-collapse:collapse;font-size:12px}
+table.diag th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);font-weight:600;padding:12px 0 8px;border-bottom:1px solid var(--line)}
+table.diag th:not(:first-child),table.diag td:not(:first-child){text-align:right}
+table.diag td{padding:8px 0;border-bottom:1px solid color-mix(in srgb,var(--line) 55%,transparent);font-variant-numeric:tabular-nums}
+table.diag tr:last-child td{border-bottom:0}
+table.diag td:first-child{font-weight:500}
+.diag-pill{display:inline-block;font-size:10px;font-weight:600;padding:3px 8px;border-radius:99px;white-space:nowrap}
+.diag-pill.ok{color:var(--leaf);background:color-mix(in srgb,var(--leaf) 13%,transparent)}
+.diag-pill.warn{color:var(--amber);background:color-mix(in srgb,var(--amber) 15%,transparent)}
+.diag-pill.bad{color:var(--clay);background:color-mix(in srgb,var(--clay) 15%,transparent)}
+.corr-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid color-mix(in srgb,var(--line) 55%,transparent);font-size:12px}
+.corr-row:last-of-type{border-bottom:0}
+.corr-row b{width:76px;font-weight:500;flex-shrink:0}
+.corr-track{flex:1;height:6px;border-radius:99px;background:color-mix(in srgb,var(--muted) 16%,transparent);overflow:hidden}
+.corr-track i{display:block;height:100%;border-radius:99px;background:var(--leaf)}
+.corr-track i.hot{background:var(--clay)}
+.corr-val{width:40px;text-align:right;font-variant-numeric:tabular-nums;font-size:11px;color:var(--muted);flex-shrink:0}
+.corr-note{font-size:11px;color:var(--muted);line-height:1.55;padding:11px 0 2px}
+.corr-note.bad{color:var(--clay)}
+.evt-actions{display:flex;gap:8px;padding:14px 0 4px}
+.evt-btn{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:11px 8px;font-family:inherit;font-size:12px;font-weight:600;color:var(--text);cursor:pointer}
+.evt-btn:active{transform:scale(.98)}
+.evt-btn.busy{opacity:.55;pointer-events:none}
+.evt-list{list-style:none;font-size:11px;color:var(--muted)}
+.evt-list li{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid color-mix(in srgb,var(--line) 55%,transparent)}
+.evt-list li:last-child{border-bottom:0}
+.evt-list b{color:var(--text);font-weight:600}
