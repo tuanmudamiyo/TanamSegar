@@ -29,6 +29,21 @@
   </header>
 
   <section id="view-analyze">
+    <p class="section-label">Forecast &amp; advice</p>
+    <div class="fc-card">
+      <div class="fc-head">
+        <span class="fc-badge" id="fcBadge" hidden>Demo model · synthetic data</span>
+        <span class="fc-issued" id="fcIssued">&nbsp;</span>
+      </div>
+      <div class="trend-empty" id="fcEmpty">Loading the forecast model…</div>
+      <ul class="fc-advice" id="fcAdvice"></ul>
+      <table class="diag fc-table" id="fcTable" hidden>
+        <thead><tr id="fcHeadRow"></tr></thead>
+        <tbody id="fcBody"></tbody>
+      </table>
+      <p class="fc-note" id="fcNote" hidden></p>
+    </div>
+
     <p class="section-label">Dataset collection</p>
     <div class="collect-hero">
       <div class="collect-count"><strong id="cRecords">—</strong><span>records logged</span></div>
@@ -98,6 +113,7 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
   import { getDatabase, ref, get, query, orderByKey, limitToLast, push } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+  import { loadForecaster, predict, recommend } from "./forecast.js";
 
   /* Same project as home.html — keep these files in sync. */
   const firebaseConfig = {
@@ -142,7 +158,7 @@
   /* ---- Dataset collection monitor ----
      Watches /Logs while the ESP32 is collecting: how much data exists, whether
      it is still arriving, and whether each sensor channel is actually moving.
-     Replaced by the forecast UI once the model is trained. */
+     Shares its /Logs read with the forecast card above it. */
   const TARGET_DAYS = 28;
   const TARGET_ROWS = TARGET_DAYS * 24 * 60;   // one record per minute
   const WINDOW_ROWS = 1500;                    // ~25 h, enough for the health checks
@@ -251,9 +267,8 @@
     setInterval(paintFreshness, 15000);
   }
 
-  async function loadHealth(){
-    const snap = await get(query(ref(db, 'Logs'), orderByKey(), limitToLast(WINDOW_ROWS)));
-    if (!snap.exists()) return;
+  async function loadHealth(snap){
+    if (!snap || !snap.exists()) return;
 
     const raw  = snap.val();
     const ts   = Object.keys(raw).map(Number).sort((a, b) => a - b);
@@ -346,19 +361,23 @@
     }
   }
 
-  /* ---- Event log: watering and fertiliser timestamps ---- */
+  /* ---- Event log: watering and fertiliser timestamps ----
+     Returns the most recent fertiliser time, which the advice uses to say
+     "give it time" instead of recommending a second dose on top of the first. */
   async function loadEvents(){
     const list = $('evtList');
+    let lastFert = null;
     try {
       const snap = await get(query(ref(db, 'events'), orderByKey(), limitToLast(8)));
       list.innerHTML = '';
       if (!snap.exists()){
         list.innerHTML = '<li><span>Nothing recorded yet</span></li>';
-        return;
+        return null;
       }
       const v = snap.val();
       Object.keys(v).sort().reverse().forEach(k => {
         const e = v[k] || {};
+        if (e.type === 'fertiliser' && e.at && (!lastFert || e.at > lastFert)) lastFert = e.at;
         const when = e.at
           ? new Date(e.at * 1000).toLocaleString('en-GB',
               { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })
@@ -373,6 +392,7 @@
       $('evtStatus').classList.add('error');
       $('evtStatus').textContent = 'Event log needs the /events rule published in Firebase.';
     }
+    return lastFert;
   }
 
   document.querySelectorAll('.evt-btn').forEach(btn => {
@@ -384,7 +404,8 @@
       try {
         await push(ref(db, 'events'), { type: type, at: Math.floor(Date.now() / 1000) });
         $('evtStatus').textContent = type === 'water' ? 'Watering recorded.' : 'Fertiliser recorded.';
-        loadEvents();
+        const lastFert = await loadEvents();
+        if (lastSnap) runForecast(lastSnap, lastFert);   // advice reflects the new dose at once
       } catch (err) {
         console.error(err);
         $('evtStatus').classList.add('error');
@@ -394,12 +415,116 @@
     });
   });
 
+  /* ---- Forecast & advice ----
+     The LSTM runs here in the browser with TensorFlow.js - there is no backend.
+     GitHub Pages serves model/ as ordinary static files. TF.js is fetched only
+     on this page and only after the monitor has drawn, so a slow CDN never
+     holds the rest of the page up. */
+  const TFJS_URL = 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js';
+  let forecaster = null;
+  let lastSnap = null;
+
+  function loadTf(){
+    if (window.tf) return Promise.resolve(window.tf);
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = TFJS_URL;
+      s.async = true;
+      s.onload  = () => window.tf ? resolve(window.tf) : reject(new Error('tf global missing'));
+      s.onerror = () => reject(new Error('could not load TensorFlow.js'));
+      document.head.appendChild(s);
+    });
+  }
+
+  const FC_ROWS = [
+    { key:'moisture',   label:'Moisture',   unit:'%',     dp:1 },
+    { key:'ec',         label:'EC',         unit:'dS/m',  dp:2 },
+    { key:'nitrogen',   label:'Nitrogen',   unit:'mg/kg', dp:0 },
+    { key:'phosphorus', label:'Phosphorus', unit:'mg/kg', dp:0 },
+    { key:'potassium',  label:'Potassium',  unit:'mg/kg', dp:0 },
+    { key:'ph',         label:'pH',         unit:'',      dp:1, nowOnly:true }
+  ];
+  const esc = s => String(s).replace(/[&<>"]/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[ch]));
+
+  function fcMessage(text){
+    $('fcEmpty').textContent = text;
+    $('fcEmpty').hidden = false;
+    $('fcAdvice').innerHTML = '';
+    $('fcTable').hidden = true;
+    $('fcNote').hidden = true;
+  }
+
+  async function runForecast(snap, lastFert){
+    try {
+      if (!forecaster) forecaster = await loadForecaster(await loadTf(), 'model/');
+    } catch (err) {
+      console.error(err);
+      fcMessage('Could not load the forecast model - check the connection and reload.');
+      return;
+    }
+    const c = forecaster.contract;
+    $('fcBadge').hidden = c.data_source !== 'synthetic';
+
+    if (!snap || !snap.exists()){
+      fcMessage('No readings yet - the forecast starts once the ESP32 is logging.');
+      return;
+    }
+    const raw = snap.val();
+    const records = Object.keys(raw).map(Number).filter(n => n > 0).sort((a, b) => a - b)
+      .map(t => ({ ts: t, m: logMetrics(raw[String(t)] || {}) }));
+
+    const p = predict(forecaster, records, Date.now() / 1000);
+    if (!p.ok){ fcMessage(p.reason); return; }
+
+    const advice = recommend(p, c, { lastFertiliseTs: lastFert });
+    $('fcEmpty').hidden = true;
+    $('fcAdvice').innerHTML = advice.map(a =>
+      '<li class="fc-item ' + a.level + '"><span class="fc-area">' + esc(a.area) + '</span>' +
+      '<b>' + esc(a.title) + '</b><span class="fc-detail">' + esc(a.detail) + '</span></li>').join('');
+
+    const hs = c.horizons_h;
+    $('fcHeadRow').innerHTML = '<th>Reading</th><th>Now</th>' + hs.map(h => '<th>+' + h + ' h</th>').join('');
+    let flat = false;
+    $('fcBody').innerHTML = FC_ROWS.map(r => {
+      const now = r.nowOnly ? p.current[r.key] : p.anchor[r.key];
+      const cells = hs.map(h => {
+        if (r.nowOnly) return '<td class="fc-flat" title="Not forecast - it moves less than the probe can measure">–</td>';
+        const f = p.forecast[r.key][h];
+        if (f.source !== 'model'){
+          flat = true;
+          return '<td class="fc-flat" title="Model did not beat &quot;no change&quot; in testing">≈ ' + f.value.toFixed(r.dp) + '</td>';
+        }
+        const d = f.value - now;
+        const arrow = Math.abs(d) < Math.pow(10, -r.dp) ? '' :
+          (d > 0 ? ' <i class="fc-up">▲</i>' : ' <i class="fc-dn">▼</i>');
+        return '<td>' + f.value.toFixed(r.dp) + arrow + '</td>';
+      }).join('');
+      return '<tr><td>' + r.label + (r.unit ? ' <small>' + r.unit + '</small>' : '') + '</td>' +
+             '<td>' + now.toFixed(r.dp) + '</td>' + cells + '</tr>';
+    }).join('');
+    $('fcTable').hidden = false;
+
+    const notes = [];
+    if (flat) notes.push('≈ marks a reading where the model did not beat "no change" in testing, so the current value is shown instead.');
+    if (c.data_source === 'synthetic') notes.push('This model was trained on simulated soil data to prove the pipeline works. Treat its advice as a demonstration until it is retrained on this pot\'s own readings.');
+    $('fcNote').innerHTML = notes.map(esc).join('<br>');
+    $('fcNote').hidden = !notes.length;
+    $('fcIssued').textContent = 'From readings to ' +
+      new Date(p.issuedAt * 1000).toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+  }
+
   async function startMonitor(user){
+    // one /Logs read serves both the health checks and the forecast
+    let snap = null;
+    try { snap = await get(query(ref(db, 'Logs'), orderByKey(), limitToLast(WINDOW_ROWS))); }
+    catch (err) { console.error(err); }
+    lastSnap = snap;
     try { await loadTotals(user); } catch (err) { console.error(err); }
-    try { await loadHealth();     } catch (err) { console.error(err); }
-    loadEvents();
+    try { await loadHealth(snap); } catch (err) { console.error(err); }
+    const lastFert = await loadEvents();
     $('cStamp').textContent = 'Checked ' +
       new Date().toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+    runForecast(snap, lastFert);
   }
 
   /* ---- Idle auto sign-out: glass countdown warning, then back to the login page ---- */

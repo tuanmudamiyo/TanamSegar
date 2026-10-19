@@ -1,0 +1,175 @@
+{
+ "grid_min": 10,
+ "lookback": 72,
+ "horizons_h": [
+  6,
+  24
+ ],
+ "features": [
+  "temperature",
+  "humidity",
+  "ldr",
+  "moisture",
+  "soilTemp",
+  "ec",
+  "ph",
+  "nitrogen",
+  "phosphorus",
+  "potassium",
+  "vpd",
+  "tod_sin",
+  "tod_cos",
+  "d_moisture",
+  "d_ec",
+  "d_nitrogen",
+  "d_potassium"
+ ],
+ "targets": [
+  "nitrogen",
+  "phosphorus",
+  "potassium",
+  "ec",
+  "moisture"
+ ],
+ "outputs": [
+  "nitrogen_+6h",
+  "phosphorus_+6h",
+  "potassium_+6h",
+  "ec_+6h",
+  "moisture_+6h",
+  "nitrogen_+24h",
+  "phosphorus_+24h",
+  "potassium_+24h",
+  "ec_+24h",
+  "moisture_+24h"
+ ],
+ "x_mu": [
+  28.510169982910156,
+  76.73760223388672,
+  1140.238525390625,
+  42.057132720947266,
+  28.909141540527344,
+  1.277265191078186,
+  6.942481517791748,
+  70.62191772460938,
+  29.198837280273438,
+  160.1858673095703,
+  1.0449639558792114,
+  8.431857713731006e-05,
+  0.007123798131942749,
+  0.028944551944732666,
+  -0.0010707160690799356,
+  0.06750693917274475,
+  0.09442514181137085
+ ],
+ "x_sd": [
+  3.5163586139678955,
+  15.348012924194336,
+  1387.3563232421875,
+  5.626028060913086,
+  3.1684117317199707,
+  0.11623263359069824,
+  0.10598628968000412,
+  12.52415943145752,
+  4.629577159881592,
+  28.611665725708008,
+  0.8200415372848511,
+  0.7070891857147217,
+  0.7069877982139587,
+  2.7528581619262695,
+  0.05825185030698776,
+  2.6681346893310547,
+  6.110591888427734
+ ],
+ "y_mu": [
+  0.5982785224914551,
+  -0.15555524826049805,
+  0.39067935943603516,
+  0.007675668690353632,
+  -0.2955907881259918,
+  2.034038782119751,
+  -0.19522614777088165,
+  0.7481904625892639,
+  0.02955477684736252,
+  -1.0548549890518188
+ ],
+ "y_sd": [
+  5.900163173675537,
+  2.4705374240875244,
+  16.391128540039062,
+  0.09824153780937195,
+  6.050058364868164,
+  9.280242919921875,
+  4.091763973236084,
+  27.137556076049805,
+  0.14695821702480316,
+  8.318381309509277
+ ],
+ "residual": true,
+ "data_source": "synthetic",
+ "exported_at": "2026-10-19T13:16:23+00:00",
+ "tz_offset_sec": 28800,
+ "delta_steps": 6,
+ "skill": {
+  "nitrogen_+6h": {
+   "skill_pct": 12.78,
+   "model_mae": 4.732,
+   "persist_mae": 5.4254,
+   "beats_persistence": true
+  },
+  "phosphorus_+6h": {
+   "skill_pct": -4.07,
+   "model_mae": 2.0227,
+   "persist_mae": 1.9436,
+   "beats_persistence": false
+  },
+  "potassium_+6h": {
+   "skill_pct": 4.76,
+   "model_mae": 13.2832,
+   "persist_mae": 13.9475,
+   "beats_persistence": true
+  },
+  "ec_+6h": {
+   "skill_pct": 29.73,
+   "model_mae": 0.0538,
+   "persist_mae": 0.0766,
+   "beats_persistence": true
+  },
+  "moisture_+6h": {
+   "skill_pct": 24.73,
+   "model_mae": 4.0921,
+   "persist_mae": 5.4369,
+   "beats_persistence": true
+  },
+  "nitrogen_+24h": {
+   "skill_pct": 5.06,
+   "model_mae": 9.4324,
+   "persist_mae": 9.935,
+   "beats_persistence": true
+  },
+  "phosphorus_+24h": {
+   "skill_pct": -1.63,
+   "model_mae": 3.1258,
+   "persist_mae": 3.0756,
+   "beats_persistence": false
+  },
+  "potassium_+24h": {
+   "skill_pct": 11.75,
+   "model_mae": 18.6246,
+   "persist_mae": 21.1034,
+   "beats_persistence": true
+  },
+  "ec_+24h": {
+   "skill_pct": 17.36,
+   "model_mae": 0.1046,
+   "persist_mae": 0.1266,
+   "beats_persistence": true
+  },
+  "moisture_+24h": {
+   "skill_pct": 28.14,
+   "model_mae": 7.0179,
+   "persist_mae": 9.7654,
+   "beats_persistence": true
+  }
+ }
+}
