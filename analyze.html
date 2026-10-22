@@ -324,7 +324,11 @@
     const ecv = [], nv = [], pv = [], kv = [];
     rows.forEach(r => {
       const e = num(r.ec), a = num(r.nitrogen), b = num(r.phosphorus), c = num(r.potassium);
-      if (e !== null && a !== null && b !== null && c !== null){
+      /* Skip bad RS485 frames (0 or 1999) - a handful of them can drag a true
+         r of 0.99 down far enough to hide a probe that derives NPK from EC. */
+      const real = e !== null && e >= 0.02 && e <= 12 &&
+        [a, b, c].every(v => v !== null && v >= 0.5 && v <= 900);
+      if (real){
         ecv.push(e); nv.push(a); pv.push(b); kv.push(c);
       }
     });

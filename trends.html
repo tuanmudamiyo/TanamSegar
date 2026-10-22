@@ -306,24 +306,49 @@
       }
       const logs = snap.val();
       const keys = Object.keys(logs).sort((a, b) => Number(a) - Number(b));
-      const rows = [['Time', 'Temperature', 'Humidity', 'Light', 'Nitrogen', 'Phosphorus', 'Potassium', 'Moisture', 'Soil Temperature', 'EC', 'pH']];
+      /* 'Unix Time (s)' is the exact reading time. 'Time' is for reading by eye
+         only: Excel dates carry no time zone, so it shows whatever zone the
+         downloading computer was set to. ml/import_download.py uses the Unix
+         column alone, so the dataset cannot shift by hours between machines. */
+      const rows = [['Time', 'Unix Time (s)', 'Temperature', 'Humidity', 'Light', 'Nitrogen', 'Phosphorus', 'Potassium', 'Moisture', 'Soil Temperature', 'EC', 'pH']];
       keys.forEach(k => {
         const rec = logs[k] || {};
         const m = logMetrics(rec);
-        const ts = Number(rec.timestamp || k) * 1000;
+        const sec = Number(rec.timestamp || k);
         rows.push([
-          new Date(ts),
+          new Date(sec * 1000), sec,
           m.temperature ?? '', m.humidity ?? '', m.ldr ?? '',
           m.nitrogen ?? '', m.phosphorus ?? '', m.potassium ?? '',
           m.moisture ?? '', m.soilTemp ?? '', m.ec ?? '', m.ph ?? ''
         ]);
       });
       const ws = XLSX.utils.aoa_to_sheet(rows, { cellDates: true });
-      ws['!cols'] = [{ wch: 20 }, ...Array(10).fill({ wch: 12 })];
+      ws['!cols'] = [{ wch: 20 }, { wch: 13 }, ...Array(10).fill({ wch: 12 })];
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Dataset');
+
+      /* Watering and fertiliser times from the Analyze page's event log, so the
+         interventions travel with the readings. Optional: if /events cannot be
+         read, the readings still download without this sheet. */
+      let nEvents = 0;
+      try {
+        const evSnap = await get(ref(db, 'events'));
+        if (evSnap.exists()) {
+          const ev = Object.values(evSnap.val() || {})
+            .filter(e => e && e.at).sort((a, b) => a.at - b.at);
+          const evRows = [['Time', 'Unix Time (s)', 'Event']];
+          ev.forEach(e => evRows.push([new Date(e.at * 1000), e.at,
+            e.type === 'fertiliser' ? 'Fertilised' : e.type === 'water' ? 'Watered' : String(e.type || '')]));
+          const evWs = XLSX.utils.aoa_to_sheet(evRows, { cellDates: true });
+          evWs['!cols'] = [{ wch: 20 }, { wch: 13 }, { wch: 12 }];
+          XLSX.utils.book_append_sheet(wb, evWs, 'Events');
+          nEvents = ev.length;
+        }
+      } catch (evErr) { console.warn('events not included:', evErr); }
+
       XLSX.writeFile(wb, `tanamsegar_dataset_${new Date().toISOString().slice(0, 10)}.xlsx`);
-      statusEl.textContent = `Downloaded ${rows.length - 1} readings.`;
+      statusEl.textContent = `Downloaded ${rows.length - 1} readings` +
+        (nEvents ? ` and ${nEvents} events.` : '.');
     } catch (err) {
       console.error(err);
       statusEl.classList.add('error');
