@@ -230,6 +230,31 @@ export function predict(fc, records, nowSec){
   return { ok: true, issuedAt: w.issuedAt, current: w.last, anchor: w.anchor, forecast: out };
 }
 
+/* ---- demo mode ----
+   Replays a recorded run (model/demo.json: the 10-minute grid the model was
+   trained and tested on). Row k is "now". The model is given rows before k
+   only, so nothing from the future leaks into the forecast; rows from k on are
+   what actually happened, which is what the forecast is judged against.
+   Each grid row becomes one record in the middle of its bin, so the browser's
+   resampling reproduces the grid exactly. */
+export function demoRecords(demo, contract, k){
+  const step = demo.grid_min * 60;
+  const back = contract.lookback + contract.delta_steps + Math.floor(MAX_GAP_MIN / contract.grid_min) + 4;
+  const records = [];
+  for (let j = Math.max(0, k - back); j < k; j++){
+    const m = {};
+    for (const c of RAW_CH) m[c] = demo.data[c][j];
+    records.push({ ts: demo.t0 + j * step + step / 2, m });
+  }
+  return { records, now: demo.t0 + k * step + 1 };
+}
+
+/* What actually happened h hours after "now" (row k) - the training target. */
+export function demoActual(demo, k, channel, h){
+  const v = demo.data[channel][k + Math.round(h * 60 / demo.grid_min)];
+  return isNum(v) ? v : null;
+}
+
 /* ---- recommendations ----
 
    Absolute thresholds only where they are meaningful for this hardware:

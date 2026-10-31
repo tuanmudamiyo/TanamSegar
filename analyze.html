@@ -32,8 +32,24 @@
     <p class="section-label">Forecast &amp; advice</p>
     <div class="fc-card">
       <div class="fc-head">
-        <span class="fc-badge" id="fcBadge" hidden>Demo model · synthetic data</span>
+        <div class="fc-mode" role="group" aria-label="Forecast source">
+          <button type="button" class="on" data-mode="live" aria-pressed="true">Live</button>
+          <button type="button" data-mode="demo" aria-pressed="false">Demo</button>
+        </div>
+        <span class="fc-badge" id="fcBadge" hidden>Synthetic-trained model</span>
         <span class="fc-issued" id="fcIssued">&nbsp;</span>
+      </div>
+      <div class="fc-demo" id="fcDemo" hidden>
+        <div class="fc-demo-row">
+          <button type="button" class="fc-step" id="fcBack" aria-label="6 hours earlier">−6 h</button>
+          <input type="range" id="fcSlider" min="0" max="0" step="1" aria-label="Point in the recorded run">
+          <button type="button" class="fc-step" id="fcFwd" aria-label="6 hours later">+6 h</button>
+        </div>
+        <div class="fc-demo-meta"><b id="fcWhen">&nbsp;</b><span class="fc-split" id="fcSplit"></span></div>
+        <div class="fc-chips" id="fcChips" role="group" aria-label="Reading to chart"></div>
+        <div class="fc-chart" id="fcChart"></div>
+        <div class="fc-legend"><span><i class="lg-actual"></i>Actual readings</span><span><i class="lg-fc"></i>Model forecast</span><span><i class="lg-water"></i>Watered</span><span><i class="lg-fert"></i>Fertilised</span></div>
+        <p class="fc-skill" id="fcSkill"></p>
       </div>
       <div class="trend-empty" id="fcEmpty">Loading the forecast model…</div>
       <ul class="fc-advice" id="fcAdvice"></ul>
@@ -113,7 +129,7 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
   import { getDatabase, ref, get, query, orderByKey, limitToLast, push } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
-  import { loadForecaster, predict, recommend } from "./forecast.js";
+  import { loadForecaster, predict, recommend, demoRecords, demoActual } from "./forecast.js";
 
   /* Same project as home.html — keep these files in sync. */
   const firebaseConfig = {
@@ -423,10 +439,18 @@
      The LSTM runs here in the browser with TensorFlow.js - there is no backend.
      GitHub Pages serves model/ as ordinary static files. TF.js is fetched only
      on this page and only after the monitor has drawn, so a slow CDN never
-     holds the rest of the page up. */
+     holds the rest of the page up.
+
+     Live runs the model on this pot's latest readings. Demo replays a recorded
+     run (model/demo.json) through the same model, with a time slider, and
+     shows what actually happened next - the only way to judge a forecast
+     before the future arrives. */
   const TFJS_URL = 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js';
   let forecaster = null;
   let lastSnap = null;
+  let liveFert = null;
+  let fcMode = 'live';
+  let demo = null, demoK = 0, demoCh = 'moisture', demoP = null, demoQueued = false;
 
   function loadTf(){
     if (window.tf) return Promise.resolve(window.tf);
@@ -440,6 +464,11 @@
     });
   }
 
+  async function ensureModel(){
+    if (!forecaster) forecaster = await loadForecaster(await loadTf(), 'model/');
+    return forecaster;
+  }
+
   const FC_ROWS = [
     { key:'moisture',   label:'Moisture',   unit:'%',     dp:1 },
     { key:'ec',         label:'EC',         unit:'dS/m',  dp:2 },
@@ -448,6 +477,7 @@
     { key:'potassium',  label:'Potassium',  unit:'mg/kg', dp:0 },
     { key:'ph',         label:'pH',         unit:'',      dp:1, nowOnly:true }
   ];
+  const FC_ROW = Object.fromEntries(FC_ROWS.map(r => [r.key, r]));
   const esc = s => String(s).replace(/[&<>"]/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[ch]));
 
   function fcMessage(text){
@@ -458,28 +488,9 @@
     $('fcNote').hidden = true;
   }
 
-  async function runForecast(snap, lastFert){
-    try {
-      if (!forecaster) forecaster = await loadForecaster(await loadTf(), 'model/');
-    } catch (err) {
-      console.error(err);
-      fcMessage('Could not load the forecast model - check the connection and reload.');
-      return;
-    }
-    const c = forecaster.contract;
-    $('fcBadge').hidden = c.data_source !== 'synthetic';
-
-    if (!snap || !snap.exists()){
-      fcMessage('No readings yet - the forecast starts once the ESP32 is logging.');
-      return;
-    }
-    const raw = snap.val();
-    const records = Object.keys(raw).map(Number).filter(n => n > 0).sort((a, b) => a - b)
-      .map(t => ({ ts: t, m: logMetrics(raw[String(t)] || {}) }));
-
-    const p = predict(forecaster, records, Date.now() / 1000);
-    if (!p.ok){ fcMessage(p.reason); return; }
-
+  /* Advice list, Now / +6 h / +24 h table and notes - shared by both modes.
+     actual(key, h) is passed in Demo mode only, where the future is recorded. */
+  function renderForecast(p, c, lastFert, actual){
     const advice = recommend(p, c, { lastFertiliseTs: lastFert });
     $('fcEmpty').hidden = true;
     $('fcAdvice').innerHTML = advice.map(a =>
@@ -494,14 +505,16 @@
       const cells = hs.map(h => {
         if (r.nowOnly) return '<td class="fc-flat" title="Not forecast - it moves less than the probe can measure">–</td>';
         const f = p.forecast[r.key][h];
+        const a = actual ? actual(r.key, h) : null;
+        const act = a === null ? '' : '<small class="fc-act">actual ' + a.toFixed(r.dp) + '</small>';
         if (f.source !== 'model'){
           flat = true;
-          return '<td class="fc-flat" title="Model did not beat &quot;no change&quot; in testing">≈ ' + f.value.toFixed(r.dp) + '</td>';
+          return '<td class="fc-flat" title="Model did not beat &quot;no change&quot; in testing">≈ ' + f.value.toFixed(r.dp) + act + '</td>';
         }
         const d = f.value - now;
         const arrow = Math.abs(d) < Math.pow(10, -r.dp) ? '' :
           (d > 0 ? ' <i class="fc-up">▲</i>' : ' <i class="fc-dn">▼</i>');
-        return '<td>' + f.value.toFixed(r.dp) + arrow + '</td>';
+        return '<td>' + f.value.toFixed(r.dp) + arrow + act + '</td>';
       }).join('');
       return '<tr><td>' + r.label + (r.unit ? ' <small>' + r.unit + '</small>' : '') + '</td>' +
              '<td>' + now.toFixed(r.dp) + '</td>' + cells + '</tr>';
@@ -510,12 +523,237 @@
 
     const notes = [];
     if (flat) notes.push('≈ marks a reading where the model did not beat "no change" in testing, so the current value is shown instead.');
-    if (c.data_source === 'synthetic') notes.push('This model was trained on simulated soil data to prove the pipeline works. Treat its advice as a demonstration until it is retrained on this pot\'s own readings.');
+    if (actual) notes.push('"actual" is what the sensors recorded next. The model never saw it - it is here to judge the forecast.',
+      'Forecasts assume nothing is done to the pot. Watering, a dose or rain after "now" moves the actual away from the forecast - an outside event the model could not know about, not the model failing. Waterings and doses are marked on the chart; rain is not logged.');
+    else if (c.data_source === 'synthetic') notes.push('This model was trained on simulated soil data to prove the pipeline works. Treat its advice as a demonstration until it is retrained on this pot\'s own readings.');
     $('fcNote').innerHTML = notes.map(esc).join('<br>');
     $('fcNote').hidden = !notes.length;
+  }
+
+  async function runForecast(snap, lastFert){
+    liveFert = lastFert;
+    if (fcMode !== 'live') return;
+    try { await ensureModel(); }
+    catch (err) {
+      console.error(err);
+      fcMessage('Could not load the forecast model - check the connection and reload.');
+      return;
+    }
+    const c = forecaster.contract;
+    $('fcBadge').textContent = 'Synthetic-trained model';
+    $('fcBadge').hidden = c.data_source !== 'synthetic';
+    $('fcIssued').textContent = '';
+
+    if (!snap || !snap.exists()){
+      fcMessage('No readings yet - the forecast starts once the ESP32 is logging. Switch to Demo to see the model run on a recorded dataset.');
+      return;
+    }
+    const raw = snap.val();
+    const records = Object.keys(raw).map(Number).filter(n => n > 0).sort((a, b) => a - b)
+      .map(t => ({ ts: t, m: logMetrics(raw[String(t)] || {}) }));
+
+    const p = predict(forecaster, records, Date.now() / 1000);
+    if (!p.ok){ fcMessage(p.reason + ' Switch to Demo to see the model run on a recorded dataset.'); return; }
+
+    renderForecast(p, c, lastFert, null);
     $('fcIssued').textContent = 'From readings to ' +
       new Date(p.issuedAt * 1000).toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
   }
+
+  /* ---- Demo mode ---- */
+  async function startDemo(){
+    try {
+      await ensureModel();
+      if (!demo) demo = await (await fetch('model/demo.json', { cache:'no-cache' })).json();
+    } catch (err) {
+      console.error(err);
+      fcMessage('Could not load the demo data - check the connection and reload.');
+      return;
+    }
+    if (fcMode !== 'demo') return;
+    const c = forecaster.contract, steps = 60 / demo.grid_min;
+    const kMin = c.lookback + c.delta_steps + 12;
+    const kMax = demo.n - 1 - Math.max(...c.horizons_h) * steps;
+    const s = $('fcSlider');
+    s.min = kMin; s.max = kMax;
+    // open on unseen test data, half a day in, so the first thing shown is honest
+    // Open on unseen test data, at the first moment with nothing done to the
+    // pot in the 24 h ahead - no logged watering or dose, and no sudden rise in
+    // moisture (rain soaks the pot without being logged). There the
+    // forecast-vs-actual comparison is a fair one. Every other moment is still
+    // one slider move away.
+    if (!demoK){
+      const step = demo.grid_min * 60, aheadRows = Math.max(...c.horizons_h) * steps;
+      const mo = demo.data.moisture;
+      const quiet = k => {
+        const t = demo.t0 + k * step;
+        if (demo.events.some(e => e[0] > t && e[0] <= t + aheadRows * step)) return false;
+        for (let j = k; j < k + aheadRows; j++)
+          if (mo[j] !== null && mo[j + 1] !== null && mo[j + 1] - mo[j] > 3) return false;
+        return true;
+      };
+      demoK = Math.min(kMax, Math.max(kMin, demo.split.val_hi + 12 * steps));
+      for (let k = demoK; k <= kMax; k++) if (quiet(k)){ demoK = k; break; }
+    }
+    s.value = demoK;
+    $('fcBadge').textContent = 'Recorded run · ' + (demo.source === 'synthetic' ? 'synthetic data' : 'real data');
+    $('fcBadge').hidden = false;
+    $('fcIssued').textContent = '';
+    $('fcChips').innerHTML = c.targets.map(t =>
+      '<button type="button" data-ch="' + t + '" aria-pressed="' + (t === demoCh) + '"' +
+      (t === demoCh ? ' class="on"' : '') + '>' + (FC_ROW[t] ? FC_ROW[t].label : t) + '</button>').join('');
+    runDemo();
+  }
+
+  function runDemo(){
+    demoQueued = false;
+    const c = forecaster.contract, step = demo.grid_min * 60, k = demoK;
+    const t = demo.t0 + k * step;
+    $('fcWhen').textContent = new Date(t * 1000).toLocaleString('en-GB',
+      { weekday:'short', day:'numeric', month:'short', hour:'2-digit', minute:'2-digit', timeZone:'Asia/Kuala_Lumpur' });
+    const seen = k < demo.split.val_hi;
+    $('fcSplit').textContent = k < demo.split.train_hi ? 'Training data – model learned from this'
+                             : seen ? 'Validation data' : 'Unseen test data';
+    $('fcSplit').className = 'fc-split ' + (seen ? 'seen' : 'unseen');
+
+    const { records, now } = demoRecords(demo, c, k);
+    const p = predict(forecaster, records, now);
+    demoP = p.ok ? p : null;
+    drawDemoChart();
+    if (!p.ok){ fcMessage(p.reason); return; }
+    const lastFert = demo.events.filter(e => e[1] === 'fertiliser' && e[0] <= t).map(e => e[0]).pop() || null;
+    renderForecast(p, c, lastFert, (key, h) => demoActual(demo, k, key, h));
+  }
+
+  function queueDemo(){
+    if (demoQueued) return;
+    demoQueued = true;
+    requestAnimationFrame(runDemo);
+  }
+
+  /* Actual readings for the 12 h the model was given and the 24 h after,
+     with the model's forecasts as labelled points. One y-scale, one channel. */
+  const CW = 300, CHH = 128, PL = 30, PR = 10, PT = 16, PB = 18;
+  function drawDemoChart(){
+    const el = $('fcChart'), c = forecaster.contract, ch = demoCh, row = FC_ROW[ch];
+    const steps = 60 / demo.grid_min, step = demo.grid_min * 60, k = demoK;
+    const lo = k - 12 * steps, hi = k + Math.max(...c.horizons_h) * steps;
+    const vals = [];
+    for (let j = lo; j <= hi; j++) vals.push(demo.data[ch][j]);
+    const fpts = demoP ? c.horizons_h.map(h => ({ h, j: k + h * steps, f: demoP.forecast[ch][h] })) : [];
+    const all = vals.filter(v => v !== null).concat(fpts.map(q => q.f.value));
+    let ymin = Math.min(...all), ymax = Math.max(...all);
+    const pad = (ymax - ymin) * 0.15 || 1;
+    ymin -= pad; ymax += pad;
+    const X = j => PL + (j - lo) / (hi - lo) * (CW - PL - PR);
+    const Y = v => PT + (1 - (v - ymin) / (ymax - ymin)) * (CHH - PT - PB);
+
+    let d = '', pen = false;
+    vals.forEach((v, i) => {
+      if (v === null){ pen = false; return; }
+      d += (pen ? 'L' : 'M') + X(lo + i).toFixed(1) + ' ' + Y(v).toFixed(1);
+      pen = true;
+    });
+    const xNow = X(k), base = CHH - PB;
+    const evRows = type => demo.events.filter(e => e[1] === type)
+      .map(e => Math.floor((e[0] - demo.t0) / step)).filter(j => j >= lo && j <= hi);
+    const fert = evRows('fertiliser'), water = evRows('water');
+    const fmt = v => v.toFixed(row.dp);
+
+    el.innerHTML =
+      '<svg viewBox="0 0 ' + CW + ' ' + CHH + '" role="img" aria-label="' + esc(row.label) + ': actual readings and model forecast">' +
+        '<rect x="' + xNow.toFixed(1) + '" y="' + PT + '" width="' + (CW - PR - xNow).toFixed(1) + '" height="' + (base - PT) + '" class="fc-future"/>' +
+        '<text x="' + (xNow + 4).toFixed(1) + '" y="' + (PT - 5) + '" class="fc-ax">hidden from the model →</text>' +
+        '<line x1="' + PL + '" x2="' + (CW - PR) + '" y1="' + base + '" y2="' + base + '" class="trend-baseline"/>' +
+        '<text x="' + (PL - 4) + '" y="' + (PT + 3) + '" class="fc-ax" text-anchor="end">' + fmt(ymax) + '</text>' +
+        '<text x="' + (PL - 4) + '" y="' + base + '" class="fc-ax" text-anchor="end">' + fmt(ymin) + '</text>' +
+        '<line x1="' + xNow.toFixed(1) + '" x2="' + xNow.toFixed(1) + '" y1="' + PT + '" y2="' + base + '" class="fc-now"/>' +
+        '<text x="' + PL + '" y="' + (CHH - 4) + '" class="fc-ax">−12 h</text>' +
+        '<text x="' + xNow.toFixed(1) + '" y="' + (CHH - 4) + '" class="fc-ax" text-anchor="middle">now</text>' +
+        c.horizons_h.map(h => '<text x="' + X(k + h * steps).toFixed(1) + '" y="' + (CHH - 4) + '" class="fc-ax" text-anchor="' +
+          (h === Math.max(...c.horizons_h) ? 'end' : 'middle') + '">+' + h + ' h</text>').join('') +
+        fert.map(j => '<path d="M' + X(j).toFixed(1) + ' ' + (base - 1) + 'l-3.5 -6h7z" class="fc-fert"><title>Fertiliser applied</title></path>').join('') +
+        water.map(j => '<circle cx="' + X(j).toFixed(1) + '" cy="' + (base - 4) + '" r="3" class="fc-water"><title>Watered</title></circle>').join('') +
+        '<path d="' + d + '" class="fc-line"/>' +
+        fpts.map(q => {
+          const x = X(q.j), y = Y(q.f.value), model = q.f.source === 'model';
+          const anchor = q.h === Math.max(...c.horizons_h) ? 'end' : 'middle';
+          return '<circle cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="4.5" class="fc-dot' + (model ? '' : ' flat') + '">' +
+                   '<title>+' + q.h + ' h ' + (model ? 'forecast ' : 'no-change fallback ') + fmt(q.f.value) + '</title></circle>' +
+                 '<text x="' + x.toFixed(1) + '" y="' + (y - 8).toFixed(1) + '" class="fc-lbl" text-anchor="' + anchor + '">' +
+                   (model ? '' : '≈ ') + fmt(q.f.value) + '</text>';
+        }).join('') +
+        '<line class="trend-cross fc-cross" y1="' + PT + '" y2="' + base + '" visibility="hidden"/>' +
+        '<rect x="' + PL + '" y="0" width="' + (CW - PL - PR) + '" height="' + CHH + '" fill="transparent" class="trend-hit"/>' +
+      '</svg><div class="trend-tip" hidden></div>';
+
+    // crosshair + tooltip: time and actual reading under the pointer
+    const svg = el.querySelector('svg'), tip = el.querySelector('.trend-tip'), cross = el.querySelector('.fc-cross');
+    const move = ev => {
+      const r = svg.getBoundingClientRect();
+      const sx = (ev.clientX - r.left) / r.width * CW;
+      const j = Math.max(lo, Math.min(hi, Math.round(lo + (sx - PL) / (CW - PL - PR) * (hi - lo))));
+      const v = demo.data[ch][j];
+      const dh = (j - k) / steps;
+      cross.setAttribute('x1', X(j)); cross.setAttribute('x2', X(j));
+      cross.setAttribute('visibility', 'visible');
+      tip.hidden = false;
+      tip.style.left = (X(j) / CW * 100) + '%';
+      tip.textContent = (dh === 0 ? 'now' : (dh > 0 ? '+' : '−') + Math.abs(dh).toFixed(1).replace(/\.0$/, '') + ' h') +
+        ' · ' + (v === null ? 'no reading' : fmt(v) + (row.unit ? ' ' + row.unit : '')) + (dh > 0 ? ' (actual)' : '');
+    };
+    const leave = () => { tip.hidden = true; cross.setAttribute('visibility', 'hidden'); };
+    const hit = el.querySelector('.trend-hit');
+    hit.addEventListener('pointermove', move);
+    hit.addEventListener('pointerdown', move);
+    hit.addEventListener('pointerleave', leave);
+
+    // how good this forecast has been where it counts: unseen test data
+    const sk = c.skill || {};
+    $('fcSkill').textContent = 'On unseen test data, ' + row.label.toLowerCase() + ' forecasts were ' +
+      c.horizons_h.map(h => {
+        const s = sk[ch + '_+' + h + 'h'];
+        if (!s) return '+' + h + ' h: not measured';
+        return s.skill_pct >= 0
+          ? Math.round(s.skill_pct) + '% more accurate than "no change" at +' + h + ' h'
+          : Math.round(-s.skill_pct) + '% less accurate than "no change" at +' + h + ' h (so ≈ is shown)';
+      }).join(', and ') + '.';
+  }
+
+  /* ---- Live / Demo switch ---- */
+  document.querySelectorAll('.fc-mode button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.dataset.mode === fcMode) return;
+      fcMode = btn.dataset.mode;
+      document.querySelectorAll('.fc-mode button').forEach(b => {
+        b.classList.toggle('on', b === btn);
+        b.setAttribute('aria-pressed', b === btn);
+      });
+      $('fcDemo').hidden = fcMode !== 'demo';
+      fcMessage(fcMode === 'demo' ? 'Loading the recorded run…' : 'Loading the forecast model…');
+      if (fcMode === 'demo') startDemo(); else runForecast(lastSnap, liveFert);
+    });
+  });
+  $('fcSlider').addEventListener('input', e => { demoK = Number(e.target.value); queueDemo(); });
+  const stepDemo = dh => {
+    if (!demo) return;
+    const s = $('fcSlider');
+    demoK = Math.max(Number(s.min), Math.min(Number(s.max), demoK + dh * 60 / demo.grid_min));
+    s.value = demoK;
+    queueDemo();
+  };
+  $('fcBack').addEventListener('click', () => stepDemo(-6));
+  $('fcFwd').addEventListener('click', () => stepDemo(6));
+  $('fcChips').addEventListener('click', e => {
+    const b = e.target.closest('button[data-ch]');
+    if (!b || !demo) return;
+    demoCh = b.dataset.ch;
+    $('fcChips').querySelectorAll('button').forEach(x => {
+      x.classList.toggle('on', x === b);
+      x.setAttribute('aria-pressed', x === b);
+    });
+    drawDemoChart();
+  });
 
   async function startMonitor(user){
     // one /Logs read serves both the health checks and the forecast
