@@ -24,7 +24,7 @@
      "class_name": "Conv1D",
      "config": {
       "name": "conv1d",
-      "trainable": false,
+      "trainable": true,
       "dtype": "float32",
       "filters": 48,
       "kernel_size": [
@@ -46,7 +46,7 @@
      "class_name": "BatchNormalization",
      "config": {
       "name": "batch_normalization",
-      "trainable": false,
+      "trainable": true,
       "dtype": "float32",
       "axis": -1,
       "momentum": 0.99,
@@ -59,7 +59,7 @@
      "class_name": "LSTM",
      "config": {
       "name": "lstm",
-      "trainable": false,
+      "trainable": true,
       "dtype": "float32",
       "units": 64,
       "activation": "tanh",
@@ -80,7 +80,7 @@
      "class_name": "Dropout",
      "config": {
       "name": "dropout",
-      "trainable": false,
+      "trainable": true,
       "dtype": "float32",
       "rate": 0.25
      }
@@ -89,7 +89,7 @@
      "class_name": "LSTM",
      "config": {
       "name": "lstm_1",
-      "trainable": false,
+      "trainable": true,
       "dtype": "float32",
       "units": 48,
       "activation": "tanh",
@@ -110,7 +110,7 @@
      "class_name": "Dropout",
      "config": {
       "name": "dropout_1",
-      "trainable": false,
+      "trainable": true,
       "dtype": "float32",
       "rate": 0.25
      }
@@ -119,7 +119,7 @@
      "class_name": "Dense",
      "config": {
       "name": "dense",
-      "trainable": false,
+      "trainable": true,
       "dtype": "float32",
       "units": 64,
       "activation": "relu",
@@ -130,7 +130,7 @@
      "class_name": "Dense",
      "config": {
       "name": "dense_1",
-      "trainable": false,
+      "trainable": true,
       "dtype": "float32",
       "units": 10,
       "activation": "linear",
