@@ -34,7 +34,7 @@
       <div class="fc-head">
         <div class="fc-mode" role="group" aria-label="Forecast source">
           <button type="button" class="on" data-mode="live" aria-pressed="true">Live</button>
-          <button type="button" data-mode="demo" aria-pressed="false">Demo</button>
+          <button type="button" data-mode="demo" aria-pressed="false">Past</button>
         </div>
         <span class="fc-badge" id="fcBadge" hidden>Synthetic-trained model</span>
         <span class="fc-issued" id="fcIssued">&nbsp;</span>
@@ -545,7 +545,7 @@
     $('fcIssued').textContent = '';
 
     if (!snap || !snap.exists()){
-      fcMessage('No readings yet - the forecast starts once the ESP32 is logging. Switch to Demo to see the model run on a recorded dataset.');
+      fcMessage('No readings yet - the forecast starts once the ESP32 is logging. Switch to Past to see the model run on a recorded dataset.');
       return;
     }
     const raw = snap.val();
@@ -553,7 +553,7 @@
       .map(t => ({ ts: t, m: logMetrics(raw[String(t)] || {}) }));
 
     const p = predict(forecaster, records, Date.now() / 1000);
-    if (!p.ok){ fcMessage(p.reason + ' Switch to Demo to see the model run on a recorded dataset.'); return; }
+    if (!p.ok){ fcMessage(p.reason + ' Switch to Past to see the model run on a recorded dataset.'); return; }
 
     renderForecast(p, c, lastFert, null);
     $('fcIssued').textContent = 'From readings to ' +
@@ -567,7 +567,7 @@
       if (!demo) demo = await (await fetch('model/demo.json', { cache:'no-cache' })).json();
     } catch (err) {
       console.error(err);
-      fcMessage('Could not load the demo data - check the connection and reload.');
+      fcMessage('Could not load the past data - check the connection and reload.');
       return;
     }
     if (fcMode !== 'demo') return;
