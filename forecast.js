@@ -21,7 +21,7 @@ const RAW_CH = ['temperature', 'humidity', 'ldr', 'moisture', 'soilTemp',
 // Physically possible range. Outside it is a bad RS485 frame, not a reading.
 const BOUNDS = {
   temperature: [5, 55],   humidity: [5, 100],   ldr: [0, 4095],
-  moisture: [0.5, 95],    soilTemp: [5, 55],    ec: [0.02, 12],
+  moisture: [0.5, 100],   soilTemp: [5, 55],    ec: [0.02, 12],
   ph: [3, 10.5],          nitrogen: [0.5, 900], phosphorus: [0.5, 900],
   potassium: [0.5, 900]
 };
@@ -35,6 +35,7 @@ const MAX_RATE_PER_MIN = {
 const MAX_GAP_MIN = 40;          // longest gap prepare_dataset.py interpolates
 const DELTA_CH = ['moisture', 'ec', 'nitrogen', 'potassium'];
 const STALE_AFTER_SEC = 30 * 60; // no forecast from data this old
+const UNFAMILIAR_MARGIN = 0.25;  // beyond the training range by 25 % of its width
 
 const svp = t => 0.6108 * Math.exp(17.27 * t / (t + 237.3));
 const isNum = v => typeof v === 'number' && Number.isFinite(v);
@@ -206,6 +207,18 @@ export function predict(fc, records, nowSec){
     for (let k = 0; k < nf; k++)
       Xs[i * nf + k] = (w.X[i * nf + k] - contract.x_mu[k]) / contract.x_sd[k];
 
+  // Readings outside the range seen in training (e.g. soil soaked to 100 % by
+  // rain when training never went above ~55 %). The forecast is still shown,
+  // but flagged: the model is extrapolating.
+  const unfamiliar = [];
+  for (const [ch, [lo, hi]] of Object.entries(contract.train_range || {})){
+    const k = contract.features.indexOf(ch), pad = (hi - lo) * UNFAMILIAR_MARGIN;
+    for (let i = 0; i < L; i++){
+      const v = w.X[i * nf + k];
+      if (v < lo - pad || v > hi + pad){ unfamiliar.push(ch); break; }
+    }
+  }
+
   const raw = tf.tidy(() => model.predict(tf.tensor3d(Xs, [1, L, nf])).dataSync().slice());
 
   const nt = contract.targets.length;
@@ -227,7 +240,7 @@ export function predict(fc, records, nowSec){
     });
   });
 
-  return { ok: true, issuedAt: w.issuedAt, current: w.last, anchor: w.anchor, forecast: out };
+  return { ok: true, issuedAt: w.issuedAt, current: w.last, anchor: w.anchor, forecast: out, unfamiliar };
 }
 
 /* ---- demo mode ----

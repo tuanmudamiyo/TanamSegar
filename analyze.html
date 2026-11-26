@@ -522,6 +522,9 @@
     $('fcTable').hidden = false;
 
     const notes = [];
+    if (p.unfamiliar && p.unfamiliar.length) notes.push('Readings outside the range the model was trained on (' +
+      p.unfamiliar.map(ch => CHANNELS.find(x => x.key === ch).label.toLowerCase()).join(', ') +
+      ', e.g. soil soaked by rain). The forecast is an extrapolation - treat it with caution until the model is retrained on this pot\'s own data.');
     if (flat) notes.push('≈ marks a reading where the model did not beat "no change" in testing, so the current value is shown instead.');
     if (actual) notes.push('"actual" is what the sensors recorded next. The model never saw it - it is here to judge the forecast.',
       'Forecasts assume nothing is done to the pot. Watering, a dose or rain after "now" moves the actual away from the forecast - an outside event the model could not know about, not the model failing. Waterings and doses are marked on the chart; rain is not logged.');

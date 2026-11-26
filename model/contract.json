@@ -171,5 +171,47 @@
    "persist_mae": 9.7654,
    "beats_persistence": true
   }
+ },
+ "train_range": {
+  "temperature": [
+   22.65,
+   34.97
+  ],
+  "humidity": [
+   48.75,
+   99.45
+  ],
+  "ldr": [
+   0.0,
+   4087.0
+  ],
+  "moisture": [
+   17.84,
+   54.08
+  ],
+  "soilTemp": [
+   23.44,
+   34.84
+  ],
+  "ec": [
+   0.98,
+   2.116
+  ],
+  "ph": [
+   6.68,
+   7.2
+  ],
+  "nitrogen": [
+   46.5,
+   114.3
+  ],
+  "phosphorus": [
+   20.0,
+   42.8
+  ],
+  "potassium": [
+   95.7,
+   256.9
+  ]
  }
 }
